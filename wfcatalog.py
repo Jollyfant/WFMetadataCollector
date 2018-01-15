@@ -1,4 +1,5 @@
 # System libs
+import io
 import os
 import logging
 import warnings
@@ -14,6 +15,8 @@ from obspy.signal.quality_control import MSEEDMetadata
 # Custom modules
 from filestream import SDSFile
 from mongo import WFCatalogDB
+from multiprocessing import TimeoutError
+from sha256 import sha256
 
 # Configuration
 from config import CONFIG
@@ -67,12 +70,19 @@ class WFMetadataCollector():
 
   def StoreSpectraObject(self, filestream):
 
+    """
+    WFMetadataCollector.StoreSpectraObject
+    Calculates, removes old and stores new spectra object
+    """
+
     logging.debug("Start calculating spectra for %s" % filestream.filename)
 
     try:
       spectra = self.CollectPSD(filestream)
-    except Exception as ex:
-      return logging.critical("Critical exception (%s) during spectra calculation for filename %s" % (ex, filestream.filename))
+    except TimeoutError as e:
+      raise e
+    except Exception as e:
+      return logging.critical("Critical exception (%s) during spectra calculation for filename %s" % (e, filestream.filename))
 
     # Remove existing spectra from the database
     nRemoved = self.database.RemoveSpectraObject(filestream.filename)
@@ -89,8 +99,10 @@ class WFMetadataCollector():
 
     try:
       metrics = self.CollectMetrics(filestream)
-    except Exception as ex:
-      return logging.critical("Critical exception (%s) during metric calculation for filename %s." % (ex, filestream.filename))
+    except TimeoutError as e:
+      raise e
+    except Exception as e:
+      return logging.critical("Critical exception (%s) during metric calculation for filename %s." % (e, filestream.filename))
 
     # Remove existing metric document from the database
     nRemoved = self.database.RemoveMetricObject(filestream.filename)
@@ -148,6 +160,46 @@ class WFMetadataCollector():
     return self.database.SaveFileObject(fileObject)
 
 
+  def GetInventoryHash(self, inventory):
+
+    """
+    WFMetadataCollector.GetInventoryHash
+    Returns the hash of an ObsPy inventory object
+    """
+
+    buffer = io.BytesIO()
+
+    # Set the created timestamp to None
+    # Only volatile part of the inventory
+    inventory.created = None
+    inventory.write(buffer, format="STATIONXML")
+
+    return sha256(buffer)
+
+
+  def GetInventoryMetadata(self, filestream):
+
+    """
+    WFMetadataCollector.GetInventoryMetadata
+    Returns inventory (StationXML) specific metadata
+    """
+
+    inventory = self.GetInventory(filestream)
+
+    # Collect metadata
+    logging.info("Getting inventory specific metadata for file %s" % filestream.filename)
+
+    channel = inventory[0][0][0]
+    print inventory[0].description
+    return {
+      "latitude": float(channel.latitude),
+      "longitude": float(channel.longitude),
+      "elevation": float(channel.elevation),
+      "restricted": channel.restricted_status,
+      "metadataHash": self.GetInventoryHash(inventory)
+    }
+
+
   def CreateFileObject(self, filestream):
 
     """
@@ -155,10 +207,13 @@ class WFMetadataCollector():
     Creates a description of the file object to be stored in the object collection
     """
 
-    # Add the file specific metadata
-    return {
+    # Add file specific metadata
+    metadata = {
       "collector": CONFIG["__VERSION__"],
+      "publisher": CONFIG["ARCHIVE"]["NAME"],
       "created": datetime.now(),
+      "format": "miniSEED",
+      "type": filestream.datatype,
       "filename": filestream.filename,
       "size": filestream.size,
       "hash": filestream.sha256,
@@ -170,6 +225,10 @@ class WFMetadataCollector():
       "channel": filestream.channel,
       "pid": None
     }
+
+    # Add inventory specific metadata
+    if True:
+      metadata.update(self.GetInventoryMetadata(filestream))
 
 
   def GetDatabaseKeyMap(self, trace):
@@ -348,11 +407,13 @@ class WFMetadataCollector():
     # Collect data from the archive
     for neighbour in filestream.neighbours:
 
-      st = read(neighbour.filepath,
-                starttime=filestream.start,
-                endtime=filestream.next.end,
-                nearest_sample=False,
-                format="MSEED")
+      st = read(
+        neighbour.filepath,
+        starttime=filestream.start,
+        endtime=filestream.next.end,
+        nearest_sample=False,
+        format="MSEED"
+      )
 
       # Concatenate all traces
       for tr in st:
@@ -374,11 +435,8 @@ class WFMetadataCollector():
     """
 
     # Skip infrasound channels
-    if filestream.channel.endswith("DF"):
-      raise Exception("Skipping infrasound channel %s." % filename)
-
-    # Get the instrument response 
-    inventory = self._GetInventory(filestream)
+    if filestream.datatype == "infrasound waveform":
+      raise Exception("Skipping infrasound channel %s." % filestream.filename)
 
     # Create an empty ObsPy stream and fill it
     obspyStream = self.ReadMSEED(filestream)
@@ -392,13 +450,17 @@ class WFMetadataCollector():
 
     # Trim the stream and pad values with 0
     # Include start and exclusive end
-    obspyStream.trim(starttime=filestream.start,
-                     endtime=filestream.psdEnd,
-                     pad=True,
-                     fill_value=0,
-                     nearest_sample=False)
+    obspyStream.trim(
+      starttime=filestream.start,
+      endtime=filestream.psdEnd,
+      fill_value=0,
+      pad=True,
+      nearest_sample=False
+    )
 
     trace = obspyStream[0]
+
+    inventory = self.GetInventory(filestream)
 
     # Attempt to extract PSD values
     with warnings.catch_warnings(record=True) as w:
@@ -427,6 +489,8 @@ class WFMetadataCollector():
       # Attempt to create a byte string
       try:
         byteAmplitudes = self._AsByteArray(self._GetOffset(segment, ppsd.valid))
+      except TimeoutError as e:
+        raise e
       except Exception as ex:
         logging.error("Could not compress spectra for %s." % filestream.filename)
         continue
@@ -503,7 +567,7 @@ class WFMetadataCollector():
         return [counter - 1] + [self._Reduce(x) for x in segment]
 
 
-  def _GetInventory(self, filestream):
+  def GetInventory(self, filestream):
 
     """
     Public Property GetInventory

@@ -8,7 +8,7 @@
 """
 
 import os
-import hashlib
+from sha256 import sha256
 import json
 import logging
 
@@ -70,6 +70,13 @@ class SDSFile():
                         self.station,
                         self.channelDirectory)
 
+  @property
+  def datatype(self):
+    if self.channel.endswith("DF"):
+      return "infrasound waveform"
+    else:
+      return "seismic waveform"
+
   # Returns channel directory
   @property
   def channelDirectory(self):
@@ -96,14 +103,9 @@ class SDSFile():
   @property
   def sha256(self):
 
-    BLOCK_SIZE = 1 << 16
-
     if self._sha256 is None:
-      sha256 = hashlib.sha256()
       with open(self.filepath, "rb") as f:
-        for block in iter(lambda: f.read(BLOCK_SIZE), b""):
-          sha256.update(block)
-        self._sha256 = sha256.hexdigest()
+        self._sha256 = sha256(f)
 
     return self._sha256
 
@@ -150,6 +152,8 @@ class SDSFile():
                     "&station=", self.station,
                     "&location=", "--" if self.location == "" else self.location,
                     "&channel=", self.channel,
+                    "&start=", self.start.isoformat(),
+                    "&end=", self.end.isoformat(),
                     "&level=response"
                   ])
 
