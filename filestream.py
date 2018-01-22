@@ -8,10 +8,10 @@
 """
 
 import os
-from sha256 import sha256
 import json
 import logging
 
+from hashfn import md5, sha256
 from obspy import UTCDateTime
 from datetime import datetime, timedelta
 from glob import glob
@@ -24,6 +24,8 @@ class SDSFile():
   """
   Public Class SDSFile
   Class for handling files in SDS archive
+
+  Initialize by calling on a SDS Filename (e.g. GB.PGB1..HHN.D.2014.295)
   """
 
   def __init__(self, filename):
@@ -33,6 +35,8 @@ class SDSFile():
     """
 
     self._sha256 = None
+    self._md5 = None
+
     self.filename = filename
 
     try:
@@ -56,26 +60,30 @@ class SDSFile():
   # Returns the stream identifier
   @property
   def id(self):
-    return ".".join([self.network,
-                     self.station,
-                     self.location,
-                     self.channel])
+    return ".".join([
+      self.network,
+      self.station,
+      self.location,
+      self.channel
+    ])
 
   # Returns the file directory based on SDS structure
   @property
   def directory(self):
-    return os.path.join(CONFIG["ARCHIVE"]["ROOT"],
-                        self.year,
-                        self.network,
-                        self.station,
-                        self.channelDirectory)
+    return os.path.join(
+      CONFIG["ARCHIVE"]["ROOT"],
+      self.year,
+      self.network,
+      self.station,
+      self.channelDirectory
+    )
 
   @property
   def datatype(self):
     if self.channel.endswith("DF"):
-      return "infrasound waveform"
+      return "infrasound"
     else:
-      return "seismic waveform"
+      return "seismic"
 
   # Returns channel directory
   @property
@@ -101,12 +109,17 @@ class SDSFile():
     return os.path.getmtime(self.filepath)
 
   @property
-  def sha256(self):
+  def md5(self):
+    if self._md5 is None:
+      with open(self.filepath, "rb") as f:
+        self._md5 = md5(f)
+    return self._md5
 
+  @property
+  def sha256(self):
     if self._sha256 is None:
       with open(self.filepath, "rb") as f:
         self._sha256 = sha256(f)
-
     return self._sha256
 
   @property
@@ -147,15 +160,16 @@ class SDSFile():
 
     # If the location code is empty we are required to submit "--"
     # to the FDSN webservices
-    return "".join([CONFIG["ARCHIVE"]["FDSN_STATION_PATH"],
-                    "?network=", self.network,
-                    "&station=", self.station,
-                    "&location=", "--" if self.location == "" else self.location,
-                    "&channel=", self.channel,
-                    "&start=", self.start.isoformat(),
-                    "&end=", self.end.isoformat(),
-                    "&level=response"
-                  ])
+    return "".join([
+      CONFIG["ARCHIVE"]["FDSN_STATION_PATH"],
+      "?network=", self.network,
+      "&station=", self.station,
+      "&location=", "--" if self.location == "" else self.location,
+      "&channel=", self.channel,
+      "&start=", self.start.isoformat(),
+      "&end=", self.end.isoformat(),
+      "&level=response"
+    ])
 
 
   def _getAdjacentFile(self, direction):
@@ -171,19 +185,25 @@ class SDSFile():
     newYear = newDate.strftime("%Y")
     newDay = newDate.strftime("%j")
 
-    newFilename = ".".join([self.network,
-                            self.station,
-                            self.location,
-                            self.channel,
-                            self.quality,
-                            newYear,
-                            newDay
-                          ])
+    newFilename = ".".join([
+      self.network,
+      self.station,
+      self.location,
+      self.channel,
+      self.quality,
+      newYear,
+      newDay
+    ])
 
     return SDSFile(newFilename)
 
 
 class SDSFileFinder():
+
+  """
+  Class SDSFileFinder
+  Finds file in the SDS archive
+  """
 
   def __init__(self):
     pass
@@ -243,7 +263,7 @@ class SDSFileFinder():
 
     # Not a valid directory
     if not os.path.isdir(directory):
-      raise Exception("Input directory does not exist on the file system.")
+      raise Exception("Input directory does not exist on the file system")
 
     # Recursively add all files
     for root, dirs, files in os.walk(directory):
@@ -252,7 +272,7 @@ class SDSFileFinder():
         if os.path.isfile(filestream.filepath):
           files.append(file)
 
-    logging.info("Collected %i file(s) from directory %s." % (len(filestreams), directory))
+    logging.info("Collected %i file(s) from directory %s" % (len(filestreams), directory))
 
     return filestreams
 
@@ -277,7 +297,7 @@ class SDSFileFinder():
   
     filestreams = self.GetFilesFromDateRange(datetime.now().date(), window)
   
-    logging.info("Collected %i file(s) from the past (%s)." % (len(filestreams), past))
+    logging.info("Collected %i file(s) from the past (%s)" % (len(filestreams), past))
   
     return filestreams
 

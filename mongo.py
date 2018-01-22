@@ -107,27 +107,27 @@ class WFCatalogDB():
         updateSet.update(filestream.filenames)
 
       # Otherwise check the hash against the Digital Object in the database
-      elif not self.HashExists(filestream.sha256):
-        logging.debug("Filename %s with hash %s does not exist as Digital Object. Adding %s to set for updating" % (filestream.filename, filestream.sha256, filestream.filenames))
+      elif not self.HashExists(filestream.md5):
+        logging.debug("Filename %s with hash %s does not exist as Digital Object. Adding %s to set for updating" % (filestream.filename, filestream.md5, filestream.filenames))
         updateSet.update(filestream.filenames)
 
       # No changes
       else:
-        logging.debug("No sha256 checksum changes detected for file %s" % filestream.filename)
+        logging.debug("No md5 checksum changes detected for file %s" % filestream.filename)
 
     logging.info("The file set changed from %i input files to %i files for processing" % (len(filenames), len(updateSet)))
 
     return updateSet
 
 
-  def HashExists(self, sha256):
+  def HashExists(self, md5):
 
     """
     WFCatalogDB.HashExists
-    Checks whether a given file sha256 hash exists in the Digital Object database 
+    Checks whether a given file md5 hash exists in the Digital Object database 
     """
 
-    return self.GetFileObjectByHash(sha256).count() != 0
+    return self.GetFileObjectByHash(md5).count() != 0
 
 
   def SaveSpectraObject(self, document):
@@ -154,7 +154,7 @@ class WFCatalogDB():
 
     """
     WFCatalogDB.GetFileObjectByHash
-    Returns the indexed file objects by sha256 hash
+    Returns the indexed file objects by md5 hash
     """
 
     return self.database.fileObject.find({"hash": fileHash})

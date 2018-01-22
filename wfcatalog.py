@@ -16,7 +16,7 @@ from obspy.signal.quality_control import MSEEDMetadata
 from filestream import SDSFile
 from mongo import WFCatalogDB
 from multiprocessing import TimeoutError
-from sha256 import sha256
+from hashfn import sha256, md5
 
 # Configuration
 from config import CONFIG
@@ -24,16 +24,18 @@ from config import CONFIG
 class WFMetadataCollector():
 
   """
-  Main class
+  Class WFMetadataCollector
   """
 
   def __init__(self, args):
 
     self.initialized = datetime.now()
-    logging.info("New WFMetadataCollector initialized with pid %i" % os.getpid())
+    logging.info("WFMetadataCollector instance initialized with pid %i" % os.getpid())
 
     self.args = args
     self.database = WFCatalogDB()
+
+    # Cache for instrument metadata
     self.INVENTORY_CACHE = dict()
 
     self.PERIOD_TUPLE = (
@@ -97,6 +99,11 @@ class WFMetadataCollector():
 
   def StoreMetricObject(self, filestream):
 
+    """
+    WFMetadataCollector.StoreMetricObject
+    Gets daily waveform metrics and writes to database
+    """
+
     try:
       metrics = self.CollectMetrics(filestream)
     except TimeoutError as e:
@@ -134,6 +141,10 @@ class WFMetadataCollector():
         add_c_segments=True
       )
 
+      # Make sure to log all warnings
+      for warning in w:
+        logging.warning(warning.message)
+
       metadata.meta.update({"warnings": len(w)})
 
     metadata.meta.update({"filename": filestream.filename})
@@ -169,12 +180,11 @@ class WFMetadataCollector():
 
     buffer = io.BytesIO()
 
-    # Set the created timestamp to None
-    # Only volatile part of the inventory
+    # Set the created timestamp (volatile) to None
     inventory.created = None
     inventory.write(buffer, format="STATIONXML")
 
-    return sha256(buffer)
+    return md5(buffer)
 
 
   def GetInventoryMetadata(self, filestream):
@@ -190,7 +200,7 @@ class WFMetadataCollector():
     logging.info("Getting inventory specific metadata for file %s" % filestream.filename)
 
     channel = inventory[0][0][0]
-    print inventory[0].description
+
     return {
       "latitude": float(channel.latitude),
       "longitude": float(channel.longitude),
@@ -216,7 +226,7 @@ class WFMetadataCollector():
       "type": filestream.datatype,
       "filename": filestream.filename,
       "size": filestream.size,
-      "hash": filestream.sha256,
+      "hash": filestream.md5,
       "modified": filestream.modified,
       "date": filestream.start.datetime,
       "network": filestream.network,
@@ -229,6 +239,8 @@ class WFMetadataCollector():
     # Add inventory specific metadata
     if True:
       metadata.update(self.GetInventoryMetadata(filestream))
+
+    return metadata
 
 
   def GetDatabaseKeyMap(self, trace):
@@ -283,14 +295,14 @@ class WFMetadataCollector():
 
     # Add the timing quality and flags
     source.update(self.GetTimingQuality(trace))
-    source.update(self.GetFlags(trace))
+    source.update(self.GetHeaderFlags(trace))
 
     return source
 
-  def GetFlags(self, trace):
+  def GetHeaderFlags(self, trace):
 
     """
-    WFMetadataCollector.GetFlags
+    WFMetadataCollector.GetHeaderFlags
     writes mSEED header flag percentages to source document
     """
 
@@ -435,7 +447,7 @@ class WFMetadataCollector():
     """
 
     # Skip infrasound channels
-    if filestream.datatype == "infrasound waveform":
+    if filestream.datatype == "infrasound":
       raise Exception("Skipping infrasound channel %s." % filestream.filename)
 
     # Create an empty ObsPy stream and fill it
@@ -452,7 +464,7 @@ class WFMetadataCollector():
     # Include start and exclusive end
     obspyStream.trim(
       starttime=filestream.start,
-      endtime=filestream.psdEnd,
+      endtime=filestream.psdEnd - 1E-6,
       fill_value=0,
       pad=True,
       nearest_sample=False
@@ -475,6 +487,10 @@ class WFMetadataCollector():
       )
 
       ppsd.add(obspyStream)
+
+      # Make sure to log all warnings
+      for warning in w:
+        logging.warning(warning.message)
 
       warn = len(w)
 

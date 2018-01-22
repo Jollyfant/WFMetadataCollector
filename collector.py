@@ -127,6 +127,16 @@ def WFMCInitializer():
   # Set signals
   signal.signal(signal.SIGINT, signalHandler)
 
+def InitLogger(args):
+
+  # Set up the logger
+  logging.basicConfig(
+    level=logging.DEBUG if args["debug"] else logging.INFO,
+    filename=args["logfile"],
+    format="%(asctime)s %(process)d %(levelname)s %(module)s '%(message)s'"
+  )
+
+
 
 def MultiProcess(files):
 
@@ -155,15 +165,35 @@ def MultiProcess(files):
 
     processPool.close()
   except KeyboardInterrupt:
-    logging.critical("SIGINT received - pool will be terminated")
+    logging.critical("SIGINT received - master will terminate the pool")
     processPool.terminate()
   finally:
     logging.info("Pool has been terminated.")
     processPool.join()
 
-if __name__ == "__main__":
+
+def Initialize(args):
 
   initialized = datetime.now()
+
+  # Set up the logger
+  InitLogger(args)
+
+  # Get the input files from an SDS Archive
+  inputFiles = SDSFileFinder().FindFiles(args)
+  inputFiles = WFCatalogDB().DependentFileChanged(inputFiles, args)
+
+  # No work to be done
+  if len(inputFiles) == 0:
+    logging.info("No files found for processing"); sys.exit(0)
+
+  # Multiprocess the input files
+  MultiProcess(inputFiles)
+
+  logging.info("Master process has finished in %s" % (datetime.now() - initialized))
+
+
+if __name__ == "__main__":
 
   # Get the command line arguments as a dict
   args = ParseArguments()
@@ -174,22 +204,4 @@ if __name__ == "__main__":
   if args["config"]:
     print(json.dumps(CONFIG, indent=4)); sys.exit(0)
 
-  # Set up the logger
-  logging.basicConfig(
-    level=logging.DEBUG if args["debug"] else logging.INFO,
-    filename=args["logfile"],
-    format="%(asctime)s %(process)d %(levelname)s %(module)s '%(message)s'"
-  )
-
-  # Get the input files from an SDS Archive
-  inputFiles = SDSFileFinder().FindFiles(args)
-  inputFiles = WFCatalogDB().DependentFileChanged(inputFiles, args)
-
-  # No work to be done
-  if len(inputFiles) == 0:
-    logging.info("No files found for processing"); sys.exit(0)
-
-  # Multi or single process
-  MultiProcess(inputFiles)
- 
-  logging.info("Master process has finished in %s" % (datetime.now() - initialized))
+  Initialize(args)
