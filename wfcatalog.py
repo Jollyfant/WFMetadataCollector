@@ -138,7 +138,7 @@ class WFMetadataCollector():
         starttime=filestream.start,
         endtime=filestream.end,
         add_flags=True,
-        add_c_segments=True
+        add_c_segments=False
       )
 
       # Make sure to log all warnings
@@ -222,7 +222,7 @@ class WFMetadataCollector():
       "collector": CONFIG["__VERSION__"],
       "publisher": CONFIG["ARCHIVE"]["NAME"],
       "created": datetime.now(),
-      "format": "miniSEED",
+      "format": "mSEED",
       "type": filestream.datatype,
       "filename": filestream.filename,
       "size": filestream.size,
@@ -253,13 +253,12 @@ class WFMetadataCollector():
     # Source document for daily granules
     source = {
       "created": datetime.now(),
-      "digitalObjects": trace["files"],
-      "filename": trace["filename"],
+      "fileId": trace["filename"],
       "collector": CONFIG["__VERSION__"],
       "warnings": trace["warnings"],
       "status": "open",
-      "format": "miniSEED",
-      "dataType": "seismic waveform",
+      "format": "mSEED",
+      "type": "seismic",
       "nseg": len(trace.get("c_segments") or list()),
       "cont": trace["num_gaps"] == 0,
       "net": trace["network"],
@@ -297,7 +296,22 @@ class WFMetadataCollector():
     source.update(self.GetTimingQuality(trace))
     source.update(self.GetHeaderFlags(trace))
 
+    # Add used hashes to documents
+    source.update(self.GetChecksums(trace["files"]))
+
     return source
+
+
+  def GetChecksums(self, files):
+
+    """
+    WFMetadataCollector.GetChecksums
+    Returns object with filenames and checksums
+    """
+
+    # Use a chain of maps
+    return map(lambda x: ({"chksm": x.md5, "name": x.filename}), map(SDSFile, map(os.path.basename, files)))
+
 
   def GetHeaderFlags(self, trace):
 
@@ -508,7 +522,7 @@ class WFMetadataCollector():
       except TimeoutError as e:
         raise e
       except Exception as ex:
-        logging.error("Could not compress spectra for %s." % filestream.filename)
+        logging.error("Could not compress spectra for %s: %s" % (filestream.filename, ex))
         continue
 
       spectra.append({

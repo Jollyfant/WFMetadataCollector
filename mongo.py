@@ -1,15 +1,11 @@
 import os
+import re
 import logging
 
 from pymongo import MongoClient
 from filestream import SDSFile
 
 from config import CONFIG
-
-# Hardcoded
-DATABASE_NAME = "wfcatalog"
-PSD_COLLECTION = "spectra"
-DAILY_COLLECTION = "daily_streams"
 
 class WFCatalogDB():
 
@@ -22,13 +18,20 @@ class WFCatalogDB():
 
     logging.info("Process with pid %i connecting to database at %s:%i." % (os.getpid(), CONFIG["MONGO"]["HOST"], CONFIG["MONGO"]["PORT"]))
 
-    # Create a client
+    # Create a Mongo Client
     self.client = MongoClient(
       CONFIG["MONGO"]["HOST"],
       CONFIG["MONGO"]["PORT"]
     )
 
-    self.database = self.client[DATABASE_NAME]
+    self.database = self.client[CONFIG["MONGO"]["DATABASE"]]
+
+    # Authenticate user
+    if CONFIG["MONGO"]["AUTHENTICATE"]:
+      self.Authenticate(
+        CONFIG["MONGO"]["USER"],
+        CONFIG["MONGO"]["PASS"]
+      )
 
 
   def Authenticate(self, USER, PASS):
@@ -49,6 +52,7 @@ class WFCatalogDB():
     """
 
     return self.database.metrics.find({"filename": filename})
+
 
   def SaveMetricObject(self, document):
 
@@ -84,6 +88,45 @@ class WFCatalogDB():
 
     return self.database.fileObject.find({"filename": filename})
 
+  def ConvertWildcards(self, expression):
+
+    """
+    Mongo.ConvertWildcards
+    Changes glob expression supporting * and ? in to MongoDB wildcards
+    """
+
+    return "^" + expression.replace(".", "\.").replace("*", ".*").replace("?", ".?") + "$"
+
+  def DeleteDocuments(self, wildcard):
+
+    """
+    Mongo.DeleteDocuments
+    Removes documents matching a glob expression from the database
+    """
+
+    if not wildcard:
+      raise Exception("A glob expression is required for document deletion")
+
+    try:
+      SDSFile(wildcard)
+    except Exception as ex:
+      raise Exception("The glob expression is invalid: %s" % ex)
+
+    wildcard = self.ConvertWildcards(wildcard)
+    regex = re.compile(wildcard, re.IGNORECASE)
+
+    logging.info("Extracted %s from input glob expression" % wildcard)
+
+    # Dry-running for now
+    for document in self.database.fileObject.find({"filename": regex}):
+      logging.info("Deleted document %s from collection fileObject" % document["filename"])
+
+    for spectra in self.database.spectra.find({"filename": regex}):
+      logging.info("Deleted document %s from collection spectra" % spectra["filename"])
+
+    for metrics in self.database.spectra.find({"filename": regex}):
+      logging.info("Deleted document %s from collection metrics" % metrics["filename"])
+    
 
   def DependentFileChanged(self, filenames, args):
 

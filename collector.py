@@ -179,6 +179,10 @@ def Initialize(args):
   # Set up the logger
   InitLogger(args)
 
+  # Deleting documents from the database
+  if args["delete"]:
+    return WFCatalogDB().DeleteDocuments(args["glob"])
+
   # Get the input files from an SDS Archive
   inputFiles = SDSFileFinder().FindFiles(args)
   inputFiles = WFCatalogDB().DependentFileChanged(inputFiles, args)

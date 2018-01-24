@@ -50,7 +50,12 @@ class SDSFile():
        self.day) = filename.split(".")
 
     except ValueError as ex:
-      raise Exception("Input filename %s is not a valid SDS filename." % filename)
+      raise Exception("Input filename %s is not a valid SDS filename" % filename)
+
+    if self.year != "*" and not self.year.isdigit():
+      raise Exception("Input filename %s has an invalid year" % filename)
+    if self.day != "*" and not self.day.isdigit():
+      raise Exception("Input filename %s has an invalid day" % filename)
 
   # Returns filepath for a given file
   @property
@@ -381,8 +386,8 @@ class SDSFileFinder():
     # Attempt to create a phantom SDSFile using wildcards
     try:
       globExpression = SDSFile(wildcard).filepath
-    except Exception:
-      raise Exception("The glob expression is invalid and must be of the form: NETWORK.STATION.LOCATION.CHANNEL.QUALITY.YEAR.JDAY")
+    except Exception as ex:
+      raise Exception("The glob expression is invalid: %s" % ex) 
 
     logging.debug("Using glob expression: '%s'" % globExpression)
 
